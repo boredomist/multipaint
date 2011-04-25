@@ -101,11 +101,11 @@ void DeinitSDL() {
 }
 
 void UpdateConnection() {
-  char buf[256];
+  char buf[7000];
   int n;
   unsigned len = sizeof(servaddr);
   
-  n = recvfrom(sockfd, buf, 256, 0, (struct sockaddr *)&servaddr, &len);
+  n = recvfrom(sockfd, buf, 7000, 0, (struct sockaddr *)&servaddr, &len);
 
   if(n <= 0) {
     return;
@@ -235,33 +235,41 @@ void HandleMessage(char* buf, int len) {
 void HandleDraw(char* buf, int len) {
   char* user = buf;
   char* rest = buf + strlen(user) + 1;
+  len -= strlen(user) + 1;
 
-  char x_[2];
-  char y_[2];
-  char c_[2];
+  while(len > 0) {
+    char x_[2];
+    char y_[2];
+    char c_[2];
+    
+    /* reversed because converting from big endian to little endian */
+    x_[1] = rest[0];
+    x_[0] = rest[1];
+    
+    rest += 2;
+    
+    y_[1] = rest[0];
+    y_[0] = rest[1];
+    
+    rest += 2;
+    
+    c_[1] = rest[0];
+    c_[0] = rest[1];
+    
+    rest += 2;
 
-  /* reversed because converting from big endian to little endian */
-  x_[1] = rest[0];
-  x_[0] = rest[1];
+    unsigned short x, y, c;
+    
+    /* resorting to witchcraft */
+    x = *(unsigned short*)&x_;
+    y = *(unsigned short*)&y_;
+    c = *(unsigned short*)&c_;
+    
+    SetPixel(x, y, c);
 
-  rest += 2;
+    len -= 6;
 
-  y_[1] = rest[0];
-  y_[0] = rest[1];
-
-  rest += 2;
-
-  c_[1] = rest[0];
-  c_[0] = rest[1];
-
-  unsigned short x, y, c;
-  
-  /* resorting to witchcraft */
-  x = *(unsigned short*)&x_;
-  y = *(unsigned short*)&y_;
-  c = *(unsigned short*)&c_;
-
-  SetPixel(x, y, c);
+  }
 }
 
 void Handle(char* buf, int len) {
