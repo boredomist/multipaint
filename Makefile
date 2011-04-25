@@ -4,7 +4,7 @@ CHDR := $(shell find include -name "*.h")
 COBJ := $(CSRC:.c=.o)
 
 CC := clang
-CFLAGS := -Wall -Wextra -pedantic -std=c99 -Iinclude/ -Wno-unused-parameter
+CFLAGS := -Wall -Wextra -pedantic -std=c99 -Iinclude/ -Wno-unused-parameter -O2  -D_GNU_SOURCE
 LNFLAGS := -lm -lSDL -lpthread
 EXE := multipaintc
 
@@ -21,7 +21,6 @@ $(EXE): $(COBJ)
 	@ $(CC) $(CFLAGS) -c $< -o $@
 
 debug:
-	@ cd plugins; make debug
 	@$(MAKE) "CFLAGS=$(CFLAGS) -g -O0"
 
 gcc:

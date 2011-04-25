@@ -10,6 +10,8 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 
+#include <netdb.h>
+
 #include "SDL/SDL.h"
 
 #include <pthread.h>
@@ -18,12 +20,10 @@
 #define DISCONNECT 2
 #define MESSAGE 3
 #define DRAW 4
+#define ERASE 5
 
 #define WIDTH 800
 #define HEIGHT 600
-
-#define NETFPS 20.0 / 1000
-#define SDLFPS 60.0 / 1000
 
 #define WHITE -1
 
@@ -47,11 +47,13 @@ bool running;
 char nick[256];
 
 int currentColor = BLACK;
-bool mouseDown = false;
+bool mouseLeftDown = false;
+bool mouseRightDown = false;
 
 void Handle(char*, int);
 void SetPixel(int, int, int);
 void SendDraw(short, short, short);
+void SendErase(short, short);
 
 void InitSDL() {
   SDL_Init(SDL_INIT_VIDEO);
@@ -72,20 +74,35 @@ void UpdateSDL() {
     if(e.type == SDL_QUIT ) {
       running = false;
       break;
-    } else if(e.type == SDL_MOUSEMOTION && mouseDown) {
+    } else if(e.type == SDL_MOUSEMOTION && (mouseLeftDown || mouseRightDown)) {
       int x = e.motion.x;
       int y = e.motion.y;
-      SetPixel(x, y, currentColor);
+
+      if(mouseLeftDown) {
+        SetPixel(x, y, currentColor);
+        SendDraw(x, y, currentColor);
+      } else if(mouseRightDown) {
+        SendErase(x, y);
+      }
+
     } else if(e.type == SDL_MOUSEBUTTONDOWN) {
       if(e.button.button == SDL_BUTTON_WHEELDOWN) {
         currentColor = (currentColor + 1) % NUM_COLORS;
       } else if(e.button.button == SDL_BUTTON_WHEELUP) {
         currentColor = (--currentColor < 0) ? 0 : currentColor;
       } else {
-        mouseDown = true;
+        if(e.button.button == SDL_BUTTON_LEFT) {
+          mouseLeftDown = true;
+        } else if(e.button.button == SDL_BUTTON_RIGHT) {
+          mouseRightDown = true;
+        }
       }
     }  else if(e.type == SDL_MOUSEBUTTONUP) {
-      mouseDown = false;
+      if(e.button.button == SDL_BUTTON_LEFT) {
+        mouseLeftDown = false;
+      } else if(e.button.button == SDL_BUTTON_RIGHT) {
+        mouseRightDown = false;
+      }
     }
   }
 }
@@ -115,6 +132,14 @@ void UpdateConnection() {
 }
 
 void SetPixel(int x, int y, int c) {
+
+  if(x >= WIDTH || x < 0) {
+    return;
+  }
+  if(y >= HEIGHT || y < 0) {
+    return;
+  }
+
   unsigned color;
   switch (c) {
   case WHITE: 
@@ -158,10 +183,27 @@ void SetPixel(int x, int y, int c) {
   if(SDL_MUSTLOCK(screen)) {
     SDL_UnlockSurface(screen);
   }
+}
 
-  if(c != WHITE) {
-    SendDraw(x, y, c);
-  }
+void SendErase(short x, short y) {
+  char buf[6];
+  unsigned len = sizeof(servaddr);
+  buf[0] = '\x00';
+  buf[1] = ERASE;
+  short xtmp = htons(x);
+  short ytmp = htons(y);
+
+  char* xpos = (char*)&xtmp;
+  char* ypos = (char*)&ytmp;
+
+  buf[2] = xpos[0];
+  buf[3] = xpos[1];
+
+  buf[4] = ypos[0];
+  buf[5] = ypos[1];
+
+  sendto(sockfd, buf, 6, 0,
+         (struct sockaddr *)&servaddr, len);
 }
 
 void SendDraw(short x, short y, short c) {
@@ -196,9 +238,15 @@ void Connect(char* host, char* name) {
   
   memset(&servaddr, '\0', sizeof(servaddr));
   
+  struct hostent* h = gethostbyname(host);
+  if(h == NULL) {
+    printf("Error resolving host!\n");
+    exit(1);
+  }
+
+  memcpy(&servaddr.sin_addr, h->h_addr_list[0], h->h_length);
   servaddr.sin_family = AF_INET;
-  servaddr.sin_addr.s_addr = inet_addr(host);
-  servaddr.sin_port=htons(5303);
+  servaddr.sin_port = htons(5303);
   
   unsigned len = sizeof(servaddr);
   
@@ -207,15 +255,26 @@ void Connect(char* host, char* name) {
   s[1] = '\x00001';
   strcpy(s + 2, name);
   
+  if(connect(sockfd, (const struct sockaddr*)&servaddr, len) < 0) {
+    printf("Connect failed!\n");
+    exit(1);
+  }
+
   sendto(sockfd, s, strlen(name) + 2, 0,
          (struct sockaddr *)&servaddr, len);
   
   int n = recvfrom(sockfd, buf, 256, 0, (struct sockaddr *)&servaddr, &len);
   
+  if(n < 0) {
+    printf("Connect failed\n");
+    exit(1);
+  }
+
   buf[n] = 0;
   
   strcpy(nick, buf + 2);
   printf("Nick is => %s\n", nick);
+  free(s);
 }
 
 void HandleConnect(char* buf, int len) {
@@ -232,7 +291,7 @@ void HandleMessage(char* buf, int len) {
   printf("%s> %s\n", user, msg);
 }
 
-void HandleDraw(char* buf, int len) {
+void draw_erase_stub(char* buf, int len, bool draw) {
   char* user = buf;
   char* rest = buf + strlen(user) + 1;
   len -= strlen(user) + 1;
@@ -265,11 +324,19 @@ void HandleDraw(char* buf, int len) {
     y = *(unsigned short*)&y_;
     c = *(unsigned short*)&c_;
     
-    SetPixel(x, y, c);
+    SetPixel(x, y, draw ? c : WHITE);
 
     len -= 6;
 
   }
+}
+
+void HandleDraw(char* buf, int len) {
+  draw_erase_stub(buf, len, true);
+}
+
+void HandleErase(char* buf, int len) {
+  draw_erase_stub(buf, len, false);
 }
 
 void Handle(char* buf, int len) {
@@ -292,7 +359,10 @@ void Handle(char* buf, int len) {
     break;
   case DRAW:
     HandleDraw(buf, len);
-    break;     
+    break;
+  case ERASE:
+    HandleErase(buf, len);
+    break;
   }
 
 }
@@ -330,7 +400,6 @@ int main(int argc, char**argv)
      DrawSDL();
 
      SDL_Delay(1);
-
    }
 
    close(sockfd);
