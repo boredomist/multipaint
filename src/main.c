@@ -131,6 +131,13 @@ void UpdateConnection() {
   Handle(buf, n);
 }
 
+void SetPixel_(int x, int y, unsigned color) {
+  int bpp = screen->format->BytesPerPixel;
+  unsigned char *p = (unsigned char*)screen->pixels + y * screen->pitch + x * bpp; 
+  
+  *(unsigned*)p = color;
+}
+
 void SetPixel(int x, int y, int c) {
 
   if(x >= WIDTH || x < 0) {
@@ -174,12 +181,15 @@ void SetPixel(int x, int y, int c) {
   if(SDL_MUSTLOCK(screen)) {
     SDL_LockSurface(screen);
   }
+  
+  int x1 = x == WIDTH - 1 ? x : x + 1;
+  int y1 = y == HEIGHT - 1 ? y : y + 1;
 
-  int bpp = screen->format->BytesPerPixel;
-  unsigned char *p = (unsigned char*)screen->pixels + y * screen->pitch + x * bpp; 
-  
-  *(unsigned*)p = color; 
-  
+  SetPixel_(x, y, color);
+  SetPixel_(x1, y, color);
+  SetPixel_(x, y1, color);
+  SetPixel_(x1, y1, color);
+
   if(SDL_MUSTLOCK(screen)) {
     SDL_UnlockSurface(screen);
   }
